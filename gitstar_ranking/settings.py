@@ -7,7 +7,10 @@ NEWSPIDER_MODULE = 'gitstar_ranking.spiders'
 ITEM_PIPELINES = {
     'gitstar_ranking.pipelines.JsonWriterPipeline': 300,
     'gitstar_ranking.pipelines.CsvWriterPipeline': 400,
+    'gitstar_ranking.pipelines.MySQLStorePipeline': 300,
 }
+
+MYSQL_DATABASE_URL = 'mysql+pymysql://root:abcde12345-@localhost/github_data'
 
 # Enable and configure the AutoThrottle extension
 AUTOTHROTTLE_ENABLED = True

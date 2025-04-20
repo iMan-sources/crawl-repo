@@ -9,3 +9,4 @@ class GitHubRepoItem(scrapy.Item):
     language = scrapy.Field() 
     avatar_url = scrapy.Field()
     repo_url = scrapy.Field()
+    image = scrapy.Field()

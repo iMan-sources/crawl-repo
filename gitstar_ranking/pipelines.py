@@ -4,6 +4,12 @@ import os
 from itemadapter import ItemAdapter
 import logging
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from gitstar_ranking.models import Base, GitHubRepo
+
+
 class JsonWriterPipeline:
     def __init__(self):
         self.file = None
@@ -113,4 +119,45 @@ class CsvWriterPipeline:
             return item
         except Exception as e:
             self.logger.error(f"Error processing item for CSV: {str(e)}")
-            raise 
+            raise
+
+
+class MySQLStorePipeline:
+    def __init__(self, db_url):
+        self.db_url = db_url
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(
+            db_url=crawler.settings.get('MYSQL_DATABASE_URL')
+        )
+
+    def open_spider(self, spider):
+        self.engine = create_engine(self.db_url)
+        Base.metadata.create_all(self.engine)  # Code first: tạo bảng nếu chưa có
+        self.Session = sessionmaker(bind=self.engine)
+        self.session = self.Session()
+        spider.logger.info("Connected to MySQL and ensured tables are created.")
+
+    def close_spider(self, spider):
+        self.session.close()
+        spider.logger.info("Closed MySQL session.")
+
+    def process_item(self, item, spider):
+        repo = GitHubRepo(
+            rank=item.get('rank'),
+            name=item.get('name'),
+            stars=item.get('stars'),
+            description=item.get('description'),
+            language=item.get('language'),
+            avatar_url=item.get('avatar_url'),
+            repo_url=item.get('repo_url'),
+            image=item.get('image'),
+        )
+        self.session.add(repo)
+        try:
+            self.session.commit()
+        except Exception as e:
+            self.session.rollback()
+            spider.logger.error(f"Error inserting into DB: {e}")
+        return item
