@@ -178,3 +178,15 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - [Scrapy](https://scrapy.org/) - The web crawling framework
 - [GitStar Ranking](https://gitstar-ranking.com/) - The data source
+
+
+
+## Triển khai với docker-compose
+
+regis + db MySQl
+
+```bash
+          docker compose -f ./.docker/docker-compose.yml up -d
+
+          docker compose -f docker-compose.staging.yml up -d
+```

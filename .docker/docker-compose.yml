@@ -1,0 +1,50 @@
+version: '3.7'
+
+services:
+  db:
+    image: mysql:8.0.36
+    container_name: vscc-db
+    restart: always
+    volumes:
+      - ./vol/mysql:/var/lib/mysql
+    ports:
+      - 3306:3306
+    environment:
+      MYSQL_DATABASE: root
+      MYSQL_ROOT_PASSWORD: Hangnga98#
+      TZ: Asia/Ho_Chi_Minh
+    networks:
+      - vscc.net
+  redis:
+    image: redis:7.0.11
+    container_name: vscc-redis
+    command: /bin/sh -c "redis-server --requirepass $$REDIS_HOST_PASSWORD"
+    volumes:
+      - ./vol/redis:/data
+      - ./redis-config:/usr/local/etc/redis
+    restart: always
+    environment:
+      - REDIS_HOST_PASSWORD=abcde12345-
+    ports:
+      - 6379:6379
+    networks:
+      - vscc.net
+  storage:
+    image: minio/minio
+    container_name: vscc-storage
+    command: minio server /data --console-address ":9001"
+    volumes:
+      - ./vol/minio/data:/mnt/data
+    ports:
+      - 9001:9001
+      - 9000:9000
+    restart: always
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=Abcde12345!@#$%
+      - MINIO_VOLUMES=/mnt/data
+    networks:
+      - vscc.net
+networks:
+  vscc.net:
+    external: true
