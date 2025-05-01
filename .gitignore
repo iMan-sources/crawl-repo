@@ -64,3 +64,13 @@ htmlcov/
 # Scrapy specific
 .scrapy/
 output/ 
+# Generated files and directories
+.scrapy/
+httpcache/
+__pycache__/
+*.pyc
+.DS_Store
+crawler_stats.txt
+scout_stats.txt
+page_mapping.txt
+
