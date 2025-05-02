@@ -3,29 +3,27 @@ from pathlib import Path
 
 # Base configuration
 BASE_DIR = Path(__file__).parent
-CACHE_DIR = BASE_DIR / 'cache'
 OUTPUT_DIR = BASE_DIR / 'output'
 LOGS_DIR = BASE_DIR / 'logs'
 
 # Ensure directories exist
-for directory in [CACHE_DIR, OUTPUT_DIR, LOGS_DIR]:
+for directory in [OUTPUT_DIR, LOGS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 # Crawler settings
 BASE_URL = 'https://gitstar-ranking.com/repositories'
 MAX_REPOS = 5000
-REPOS_PER_PAGE = 100
 NUM_WORKERS = 4
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
-RETRY_DELAY = 1
+RETRY_DELAY = 2
 
-# Cache settings
-CACHE_ENABLED = True
-CACHE_TTL = 3600  # 1 hour
-HTML_CACHE_FILE = CACHE_DIR / 'pages_cache.json'
+# Output files
 RESULTS_FILE = OUTPUT_DIR / 'github_repos.json'
 CSV_FILE = OUTPUT_DIR / 'github_repos.csv'
+
+# Target repository rank to find (5000th repository)
+TARGET_REPO_RANK = 5000
 
 # Request headers
 HEADERS = {

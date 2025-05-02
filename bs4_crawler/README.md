@@ -1,10 +1,10 @@
 # BS4 GitHub Repository Crawler
 
-A high-performance web crawler for extracting GitHub repository data from gitstar-ranking.com using BeautifulSoup4, with support for parallel processing and caching.
+A high-performance web crawler for extracting GitHub repository data from gitstar-ranking.com using BeautifulSoup4, with support for parallel processing.
 
 ## Architecture Overview
 
-The crawler follows a multi-stage pipeline architecture with caching and parallel processing:
+The crawler follows a multi-stage pipeline architecture with parallel processing:
 
 ```ascii
                                      ┌──────────────┐
@@ -14,23 +14,18 @@ The crawler follows a multi-stage pipeline architecture with caching and paralle
                                            │
                                            ▼
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  PageFinder  │◄───│ CacheManager │◄───│ GitHubCrawler│
-│(find & cache)│    │(handle cache)│    │   (main)     │
-└──────┬───────┘    └──────────────┘    └──────┬───────┘
+│  PageFinder  │    │ GitHubCrawler│    │ Worker Pool  │
+│(binary search│◄───│   (main)     │───►│(process data)│
+│ & fetch)     │    │              │    │             │
+└──────┬───────┘    └──────────────┘    └──────┬──────┘
        │                                        │
        ▼                                       ▼
 ┌──────────────┐                        ┌──────────────┐
-│ HTML Content │                        │ Worker Pool  │
-│   Cache      │                        │(process data)│
+│ HTML Content │                        │ RepoParser   │
+│  Processing  │                        │(parse HTML)  │
 └──────────────┘                        └──────┬───────┘
                                               │
                                               ▼
-                                     ┌──────────────┐
-                                     │ RepoParser   │
-                                     │(parse HTML)  │
-                                     └──────┬───────┘
-                                           │
-                                           ▼
                                      ┌──────────────┐
                                      │ JSON & CSV   │
                                      │   Output     │
@@ -46,18 +41,18 @@ The crawler follows a multi-stage pipeline architecture with caching and paralle
    │ Start       │
    └─────┬───────┘
          ▼
-   ┌─────────────┐     ┌─────────────┐
-   │ Load Config │────►│ Setup Cache │
-   └─────────────┘     └─────────────┘
+   ┌─────────────┐
+   │ Load Config │
+   └─────────────┘
    ```
 
-2. **Page Discovery & Caching**
+2. **Binary Search & Page Discovery**
 
    ```ascii
-   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-   │Find Required│     │Cache HTML    │     │Verify Cache │
-   │   Pages     │────►│  Content    │────►│  Content    │
-   └─────────────┘     └─────────────┘     └─────────────┘
+   ┌─────────────┐     ┌─────────────┐
+   │Find Target  │     │Verify Page  │
+   │   Page     │────►│   Range     │
+   └─────────────┘     └─────────────┘
    ```
 
 3. **Parallel Processing**
@@ -83,14 +78,6 @@ The crawler follows a multi-stage pipeline architecture with caching and paralle
    └─────────────┘     └─────────────┘     └─────────────┘
    ```
 
-5. **Cleanup**
-   ```ascii
-   ┌─────────────┐     ┌─────────────┐
-   │Save Results │     │Clean Cache  │
-   │to Files     │────►│& Temp Data  │
-   └─────────────┘     └─────────────┘
-   ```
-
 ## Components
 
 ### 1. GitHubCrawler (crawler.py)
@@ -98,62 +85,50 @@ The crawler follows a multi-stage pipeline architecture with caching and paralle
 - Main orchestrator class
 - Manages the overall crawling process
 - Coordinates workers and data aggregation
-- Handles final cleanup
 
 ### 2. PageFinder (page_finder.py)
 
-- Discovers repository pages
-- Handles page fetching and caching
-- Uses retry mechanism for reliability
+- Uses binary search to find target page
+- Handles page fetching with retries
+- Validates page ranges
 
-### 3. CacheManager (cache_manager.py)
-
-- Manages temporary HTML content caching
-- Implements TTL-based caching
-- Reduces network requests
-- Auto-cleanup after crawling
-
-### 4. RepoParser (repo_parser.py)
+### 3. RepoParser (repo_parser.py)
 
 - Parses HTML content
 - Extracts repository information
 - Handles various HTML structures
 
-### 5. Configuration (config.py)
+### 4. Configuration (config.py)
 
 - Centralizes crawler settings
 - Configures workers and paths
-- Sets cache TTL and limits
+- Sets request timeouts and retries
 
 ## Features
 
+- **Binary Search**: Efficiently finds target page
 - **Parallel Processing**: Uses Python's multiprocessing for parallel page processing
-- **Smart Caching**: TTL-based temporary caching of HTML content with auto-cleanup
 - **Robust Parsing**: Multiple strategies for data extraction
 - **Error Handling**: Comprehensive retry and error recovery
 - **Progress Tracking**: Real-time progress monitoring
 - **Multiple Outputs**: Both JSON and CSV output formats
-- **Clean Operation**: Automatic cleanup of temporary files after completion
 
 ## Performance Optimizations
 
-1. **Caching Strategy**
+1. **Binary Search Strategy**
 
    ```ascii
-   Request ──► Check Cache ──┬─► Cache Hit ──► Return Content
-                            │
-                            └─► Cache Miss ──► Fetch & Cache
-                                                   │
-                                                   ▼
-                                            Auto-cleanup when done
+   Start ──► Check Mid Page ──┬─► Found Target ──► Process All Pages
+                              │
+                              └─► Adjust Range ──► Repeat
    ```
 
 2. **Worker Distribution**
    ```ascii
-   Pages: [1..N] ──► Split ──┬─► Worker 1: [1..N/4]
-                             ├─► Worker 2: [N/4+1..N/2]
-                             ├─► Worker 3: [N/2+1..3N/4]
-                             └─► Worker 4: [3N/4+1..N]
+   Pages: [1..50] ──► Split ──┬─► Worker 1: [1..12]
+                              ├─► Worker 2: [13..25]
+                              ├─► Worker 3: [26..37]
+                              └─► Worker 4: [38..50]
    ```
 
 ## Error Handling
@@ -161,8 +136,6 @@ The crawler follows a multi-stage pipeline architecture with caching and paralle
 - Retries for network failures
 - Graceful degradation for parsing errors
 - Comprehensive logging
-- Cache invalidation for stale data
-- Cleanup on both success and failure
 
 ## Output Format
 
@@ -181,12 +154,13 @@ The crawler follows a multi-stage pipeline architecture with caching and paralle
 ## Usage
 
 ```bash
+# Install dependencies
+pip install -r requirements.txt
+
 # Run the crawler
-python run_bs4.py
+python -m bs4_crawler
 
 # Output files will be in:
 # - bs4_crawler/output/github_repos.json
 # - bs4_crawler/output/github_repos.csv
-
-# Note: Temporary cache files are automatically cleaned up after crawling
 ```

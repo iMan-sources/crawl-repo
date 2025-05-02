@@ -3,12 +3,12 @@ import json
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List
-from multiprocessing import Pool, Manager
+from multiprocessing import Pool
 from tqdm import tqdm
 
 from .config import (
-    HTML_CACHE_FILE, RESULTS_FILE, CSV_FILE,
-    NUM_WORKERS, MAX_REPOS
+    RESULTS_FILE, CSV_FILE,
+    NUM_WORKERS, TARGET_REPO_RANK
 )
 from .page_finder import PageFinder
 from .repo_parser import RepoParser
@@ -18,22 +18,19 @@ logger = logging.getLogger(__name__)
 class GitHubCrawler:
     def __init__(self):
         """Initialize the crawler"""
-        self.page_finder = PageFinder(HTML_CACHE_FILE)
-        self.total_pages = 0
-        self.pages_info = {}
-        self.cached_pages = {}
+        self.page_finder = PageFinder()
     
-    def _worker_task(self, args: tuple) -> List[Dict]:
-        """Worker process task to parse assigned pages
+    def _worker_task(self, page: int) -> List[Dict]:
+        """Worker process task to fetch and parse a page
         
         Args:
-            args (tuple): Tuple of (page_number, html_content)
+            page (int): Page number to process
             
         Returns:
             List[Dict]: List of parsed repository data
         """
-        page_num, html = args
-        logger.info(f"Worker processing page {page_num}")
+        logger.info(f"Worker processing page {page}")
+        html = self.page_finder._fetch_page(page)
         return RepoParser.parse_page(html)
     
     def run(self) -> List[Dict]:
@@ -43,22 +40,23 @@ class GitHubCrawler:
             List[Dict]: List of crawled repository data
         """
         try:
-            logger.info("Finding and caching pages...")
-            self.total_pages, self.pages_info = self.page_finder.find_required_pages()
-            logger.info(f"Found {self.total_pages} pages with repositories")
+            logger.info("Finding target page using binary search...")
+            target_page, first_rank, last_rank = self.page_finder.find_target_page()
             
-            logger.info("Getting cached pages...")
-            self.cached_pages = self.page_finder.get_cached_pages()
-            logger.info(f"Retrieved {len(self.cached_pages)} cached pages")
+            if target_page == -1:
+                logger.error("Could not find target page")
+                return []
             
-            # Prepare work items
-            work_items = [(page, html) for page, html in self.cached_pages.items()]
+            logger.info(f"Found target page {target_page}. Now crawling all pages from 1 to 50...")
+            
+            # Create a list of all pages to crawl (1 to 50)
+            pages_to_crawl = list(range(1, 51))
             
             # Process pages with worker pool
             all_repos = []
-            with Pool(processes=NUM_WORKERS, maxtasksperchild=1) as pool:
-                with tqdm(total=len(work_items), desc="Processing pages") as pbar:
-                    for repos in pool.imap_unordered(self._worker_task, work_items):
+            with Pool(processes=NUM_WORKERS) as pool:
+                with tqdm(total=len(pages_to_crawl), desc="Processing pages") as pbar:
+                    for repos in pool.imap_unordered(self._worker_task, pages_to_crawl):
                         all_repos.extend(repos)
                         pbar.update()
             
@@ -77,7 +75,6 @@ class GitHubCrawler:
             
             return all_repos
             
-        finally:
-            # Clean up cache after finishing
-            logger.info("Cleaning up temporary cache files...")
-            self.page_finder.cache.cleanup() 
+        except Exception as e:
+            logger.error(f"Error during crawling: {str(e)}")
+            return [] 

@@ -2,33 +2,25 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 from typing import Dict, Tuple
-from pathlib import Path
-from tqdm import tqdm
-from retry import retry
 from fake_useragent import UserAgent
+from retry import retry
 
 from .config import (
-    BASE_URL, MAX_REPOS, REPOS_PER_PAGE, 
-    MAX_RETRIES, RETRY_DELAY, REQUEST_TIMEOUT
+    BASE_URL, MAX_REPOS,
+    MAX_RETRIES, RETRY_DELAY, REQUEST_TIMEOUT,
+    TARGET_REPO_RANK
 )
-from .cache_manager import CacheManager
 
 logger = logging.getLogger(__name__)
 
 class PageFinder:
-    def __init__(self, cache_file: Path):
-        """Initialize page finder
-        
-        Args:
-            cache_file (Path): Path to cache file for storing HTML content
-        """
-        self.cache = CacheManager(cache_file)
+    def __init__(self):
+        """Initialize page finder"""
         self.session = requests.Session()
-        self.pages_info: Dict[int, int] = {}  # page_number -> repo_count
     
     @retry(tries=MAX_RETRIES, delay=RETRY_DELAY, backoff=2)
     def _fetch_page(self, page: int) -> str:
-        """Fetch page content with retries and caching
+        """Fetch page content with retries
         
         Args:
             page (int): Page number to fetch
@@ -38,13 +30,6 @@ class PageFinder:
         """
         url = f"{BASE_URL}?page={page}"
         
-        # Try to get from cache first
-        cached = self.cache.get(url)
-        if cached:
-            logger.debug(f"Cache hit for page {page}")
-            return cached
-        
-        # Fetch from web if not in cache
         headers = {
             'User-Agent': UserAgent().random,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -53,71 +38,118 @@ class PageFinder:
         
         response = self.session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
-        content = response.text
-        
-        # Cache the content
-        self.cache.set(url, content)
-        logger.debug(f"Cached content for page {page}")
-        
-        return content
+        return response.text
     
-    def _count_repos_on_page(self, html: str) -> int:
-        """Count repositories on a page
+    def _get_first_rank_on_page(self, html: str) -> int:
+        """Get the rank of the first repository on the page
         
         Args:
             html (str): HTML content of the page
             
         Returns:
-            int: Number of repositories found on the page
+            int: Rank of the first repository
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        first_repo = soup.select_one('.list-group-item.paginated_item')
+        if not first_repo:
+            return -1
+        
+        # Extract rank from the name span
+        name_span = first_repo.select_one('.name')
+        if not name_span:
+            return -1
+            
+        # The rank is the first text node in the name span
+        rank_text = next((text.strip() for text in name_span.stripped_strings), None)
+        if not rank_text:
+            return -1
+            
+        try:
+            # Remove the trailing dot from rank (e.g., "1." -> "1")
+            return int(rank_text.rstrip('.'))
+        except (ValueError, AttributeError):
+            return -1
+    
+    def _get_last_rank_on_page(self, html: str) -> int:
+        """Get the rank of the last repository on the page
+        
+        Args:
+            html (str): HTML content of the page
+            
+        Returns:
+            int: Rank of the last repository
         """
         soup = BeautifulSoup(html, 'html.parser')
         repos = soup.select('.list-group-item.paginated_item')
-        return len(repos)
-    
-    def find_required_pages(self) -> Tuple[int, Dict[int, int]]:
-        """Find and cache all pages needed to reach MAX_REPOS
+        if not repos:
+            return -1
+        
+        # Get the last repository's name span
+        name_span = repos[-1].select_one('.name')
+        if not name_span:
+            return -1
+            
+        # The rank is the first text node in the name span
+        rank_text = next((text.strip() for text in name_span.stripped_strings), None)
+        if not rank_text:
+            return -1
+            
+        try:
+            # Remove the trailing dot from rank (e.g., "100." -> "100")
+            return int(rank_text.rstrip('.'))
+        except (ValueError, AttributeError):
+            return -1
+
+    def find_target_page(self) -> Tuple[int, int, int]:
+        """Use binary search to find the page containing the target rank
         
         Returns:
-            Tuple[int, Dict[int, int]]: Total pages needed and page info mapping
+            Tuple[int, int, int]: (page_number, first_rank, last_rank)
         """
-        total_repos = 0
-        current_page = 1
+        left = 1
+        right = 100  # Maximum page number on gitstar-ranking.com
+        target_page = -1
+        first_rank = -1
+        last_rank = -1
         
-        with tqdm(total=MAX_REPOS, desc="Finding pages") as pbar:
-            while total_repos < MAX_REPOS:
-                try:
-                    html = self._fetch_page(current_page)
-                    repos_count = self._count_repos_on_page(html)
-                    
-                    if repos_count == 0:
-                        logger.warning(f"No repositories found on page {current_page}")
-                        break
-                    
-                    self.pages_info[current_page] = repos_count
-                    total_repos += repos_count
-                    pbar.update(min(repos_count, MAX_REPOS - (total_repos - repos_count)))
-                    
-                    logger.info(f"Page {current_page}: Found {repos_count} repositories "
-                              f"(Total: {total_repos})")
-                    
-                    current_page += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error processing page {current_page}: {str(e)}")
+        logger.info(f"Starting binary search for repository rank {TARGET_REPO_RANK}")
+        
+        while left <= right:
+            mid = (left + right) // 2
+            try:
+                html = self._fetch_page(mid)
+                page_first_rank = self._get_first_rank_on_page(html)
+                page_last_rank = self._get_last_rank_on_page(html)
+                
+                if page_first_rank == -1 or page_last_rank == -1:
+                    # Page is empty or invalid, try lower page
+                    right = mid - 1
+                    continue
+                
+                logger.info(f"Page {mid}: First rank={page_first_rank}, Last rank={page_last_rank}")
+                
+                if page_first_rank <= TARGET_REPO_RANK <= page_last_rank:
+                    # Found the target page
+                    target_page = mid
+                    first_rank = page_first_rank
+                    last_rank = page_last_rank
                     break
+                elif TARGET_REPO_RANK < page_first_rank:
+                    right = mid - 1
+                else:
+                    left = mid + 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing page {mid}: {str(e)}")
+                right = mid - 1
         
-        return current_page - 1, self.pages_info
-    
-    def get_cached_pages(self) -> Dict[int, str]:
-        """Get all cached pages
+        if target_page == -1:
+            logger.warning("Could not find exact target page, using closest match")
+            # Use the last valid page we found
+            target_page = right
+            html = self._fetch_page(target_page)
+            first_rank = self._get_first_rank_on_page(html)
+            last_rank = self._get_last_rank_on_page(html)
         
-        Returns:
-            Dict[int, str]: Mapping of page numbers to HTML content
-        """
-        cached_pages = {}
-        for page in self.pages_info.keys():
-            url = f"{BASE_URL}?page={page}"
-            content = self.cache.get(url)
-            if content:
-                cached_pages[page] = content
-        return cached_pages 
+        logger.info(f"Found target page {target_page} with ranks {first_rank}-{last_rank}")
+        return target_page, first_rank, last_rank 
