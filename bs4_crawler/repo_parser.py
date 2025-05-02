@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup
-from typing import Dict, List, Optional
-from urllib.parse import urljoin
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urljoin, urlparse
 import logging
 import re
 
@@ -9,6 +9,26 @@ from .config import BASE_URL
 logger = logging.getLogger(__name__)
 
 class RepoParser:
+    @staticmethod
+    def _extract_repo_info_from_url(repo_url: str) -> Tuple[str, str, str]:
+        """Extract repository user and name from URL
+        
+        Args:
+            repo_url (str): Repository URL
+            
+        Returns:
+            Tuple[str, str, str]: (full_name, user, repo_name)
+            where full_name is in format "user/repo"
+        """
+        # Parse the URL path which is in format "/user/repo"
+        path = urlparse(repo_url).path.strip('/')
+        try:
+            user, repo_name = path.split('/')
+            return f"{user}/{repo_name}", user, repo_name
+        except ValueError:
+            # If we can't split into user/repo, return the whole path as name
+            return path, "", path
+
     @staticmethod
     def parse_repository(item_html: str) -> Optional[Dict]:
         """Parse a single repository item from its HTML
@@ -22,7 +42,7 @@ class RepoParser:
         try:
             soup = BeautifulSoup(item_html, 'html.parser')
             
-            # Extract rank and name
+            # Extract rank
             name_container = soup.select_one('.name')
             if not name_container:
                 logger.warning("No name container found")
@@ -40,37 +60,15 @@ class RepoParser:
                 return None
             rank = int(rank_match.group(1))
             
-            # Try multiple strategies to extract the name
-            name = None
-            
-            # Strategy 1: Try to get name from specific class selectors
-            for selector in ['.hidden-xs.hidden-sm', '.hidden-md.hidden-lg']:
-                name_elem = name_container.select_one(selector)
-                if name_elem:
-                    name = name_elem.get_text(strip=True)
-                    break
-            
-            # Strategy 2: If no name found, try to get from href
-            if not name:
-                link = name_container.find('a')
-                if link and 'href' in link.attrs:
-                    href = link['href']
-                    if href.startswith('/'):
-                        name = href[1:]  # Remove leading slash
-            
-            # Strategy 3: If still no name, try to get the last non-rank text
-            if not name:
-                text_parts = [text.strip() for text in name_container.stripped_strings]
-                name = next((part for part in reversed(text_parts) 
-                           if part and not part.endswith('.') and not re.match(r'^\d+\.', part)), None)
-            
-            if not name:
-                logger.warning(f"No valid name found for repository rank {rank}")
+            # Extract repo URL and name from it
+            repo_url = None
+            link = soup.select_one('a')
+            if link and 'href' in link.attrs:
+                repo_url = urljoin(BASE_URL, link['href'])
+                full_name, user, name = RepoParser._extract_repo_info_from_url(repo_url)
+            else:
+                logger.warning(f"No valid URL found for repository rank {rank}")
                 return None
-            
-            # Clean up the name by removing duplicates and extra whitespace
-            name = re.sub(r'(.+?)\1+$', r'\1', name)
-            name = re.sub(r'\s+', ' ', name).strip()
             
             # Extract stars
             stars_elems = soup.select('.stargazers_count')
@@ -104,15 +102,11 @@ class RepoParser:
                     avatar_url = img['src']
                     break
             
-            # Extract repo URL
-            repo_url = None
-            link = soup.select_one('a')
-            if link and 'href' in link.attrs:
-                repo_url = urljoin(BASE_URL, link['href'])
-            
             return {
                 'rank': rank,
+                'user': user,
                 'name': name,
+                'full_name': full_name,
                 'stars': stars,
                 'description': description,
                 'language': language,
